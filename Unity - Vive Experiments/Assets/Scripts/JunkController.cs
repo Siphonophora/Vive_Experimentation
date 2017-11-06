@@ -13,7 +13,6 @@ public class JunkController : MonoBehaviour {
     public float explosionTimer = 5f;
     public float explosionRadius = 0.1f;
     public float explosionForce = 1f;
-    
 
 	
 	// Update is called once per frame
@@ -26,7 +25,7 @@ public class JunkController : MonoBehaviour {
         }
 	}
 
-    public bool needsPickUp()
+    public bool NeedsPickUp()
     {
         if(beingHeld || dropped){
             return false;
@@ -45,8 +44,6 @@ public class JunkController : MonoBehaviour {
         {
             junk.GetComponent<Rigidbody>().useGravity = false;
             transform.parent = robotTractor;
-            
-            transform.Translate(new Vector3(0f, 0.05f, 0f), Space.World);
             beingHeld = true;
             return true;
         }

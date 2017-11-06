@@ -6,14 +6,25 @@ public class RobotController : MonoBehaviour {
     public float rotationSpeed = 10f;
     public float viewDistance;
     public float gripDistance;
-    public string itemToMoveTag = "Trash";
+    private string itemToMoveTag = "Trash";
+    private string itemToAvoidTag = "Robot";
+    private float avoidDistance = 0.025f;
+
+
+    public Vector3 seekDir;
+    public Vector3 avoidDir;
+    private float avoidWeight = 5f;
 
 
 
 
+    
     private Transform waypointTarget;
-    private GameObject trashTarget;
-    public Transform tractorBeam;
+    public Transform tractorBeamStart;
+    public Transform tractorBeamEnd;
+    public LineRenderer tractorBeamLR;
+    private float tractorBeamArrivalRadius = 0.01f;
+    private float tractorBeamForce = 0.2f;
     private int waypointindex = 0;
 
     public GameObject trashPoint;
@@ -24,9 +35,7 @@ public class RobotController : MonoBehaviour {
  
     // Use this for initialization
     void Start () {
-        trashTarget = new GameObject();
         waypointTarget = Waypoints.points[0];
-        
     }
 	
 	// Update is called once per frame
@@ -34,58 +43,135 @@ public class RobotController : MonoBehaviour {
 
         UpdateTarget();
 
-        bool holdingSomething = tractorBeam.childCount > 0;
+        seekDir = SeekTarget();
+        avoidDir = AvoidRobots();
+
+        MoveRobot();
+
+        if (tractorBeamEnd.childCount > 0)
+        {
+            ApplyTractorBeam();
+            ShowTractorBeam();
+        }
+
+
+
+
+    }
+
+
+    private Vector3 SeekTarget()
+    {
+        bool holdingSomething = tractorBeamEnd.childCount > 0;
 
         if (targetToMove == null && !holdingSomething)
         {
             //Follow waypoints
-
-        MoveRobotTo(waypointTarget);
-
-            if (Vector3.Distance(transform.position, waypointTarget.position) < 0.01f)
+            
+            if (Vector3.Distance(transform.position, waypointTarget.position) < 0.04f)
             {
                 GetNextWaypoint();
             }
 
-
+            return waypointTarget.transform.position - transform.position;
 
         }
-        else 
+
+        //Go Pickup a target
+        if (!holdingSomething && Vector3.Distance(targetToMove.transform.position, transform.position) > gripDistance)
         {
-            //Go Pickup a target
-            if (!holdingSomething && Vector3.Distance(targetToMove.transform.position, transform.position) > gripDistance)
-            {
-                MoveRobotTo(targetToMove.transform);
-                return;
-            }
+            return targetToMove.transform.position - transform.position;
+        }
 
-            //Try to grab a target
-            if (!holdingSomething && Vector3.Distance(targetToMove.transform.position, transform.position) <= gripDistance)
-            {
-                GrabTarget();
-                return;
-            }
+        //Try to grab a target
+        if (!holdingSomething && Vector3.Distance(targetToMove.transform.position, transform.position) <= gripDistance)
+        {
+            GrabTarget();
+            return Vector3.zero;
+        }
 
-            if (holdingSomething)
+        if (holdingSomething)
+        {
+            ApplyTractorBeam();
+            ShowTractorBeam();
+
+            Vector3 trashDir = GetTrashDir();
+
+            if (Vector3.Magnitude(trashDir) < 0.01f)
             {
-                if (Vector3.Distance(transform.position, trashTarget.transform.position) < 0.01f)
+                for (int i = 0; i < tractorBeamEnd.childCount; i++)
                 {
-                    for (int i = 0; i < tractorBeam.childCount; i++)
-                    {
-                        DropTarget(tractorBeam.GetChild(i).gameObject);
-                    }
-                    return;
+                    DropTarget(tractorBeamEnd.GetChild(i).gameObject);
                 }
-
-                MoveRobotTo(trashTarget.transform);
+                return Vector3.zero;
             }
+
+            return trashDir;
+        }
+
+        Debug.Log("Check for error. Shouldnt have hit this line");
+        return Vector3.zero;
+
+
+    }
+
+    private Vector3 AvoidRobots()
+    {
+        Vector3 avoid = Vector3.zero;
+
+        GameObject[] robots = GameObject.FindGameObjectsWithTag(itemToAvoidTag);
+
+        foreach (GameObject robot in robots)
+        {
+            if (robot != gameObject) //Don't check this object.
+            {
+                float distanceToRobot = Vector3.Distance(transform.position, robot.transform.position);
+                if (distanceToRobot < avoidDistance)
+                {
+                    avoid += transform.position - robot.transform.position;
+                }
+            }
+        }
+
+        return avoid;
+    }
+
+
+    private void ApplyTractorBeam()
+    {
+        for (int i = 0; i < tractorBeamEnd.childCount; i++)
+        {
+            GameObject go = tractorBeamEnd.GetChild(i).gameObject;
+            Vector3 beamForceDir = tractorBeamEnd.transform.position - go.transform.position;
+
+            Vector3 beamForce = beamForceDir.normalized * tractorBeamForce;
+
+            if (beamForceDir.magnitude < tractorBeamArrivalRadius)
+            {
+                float forceScale = beamForceDir.magnitude / tractorBeamArrivalRadius;
+                beamForce *= forceScale;
+            }
+            
+
+            go.GetComponent<Rigidbody>().AddForce(beamForce);
 
         }
     }
 
-    private void MoveRobotTo(Transform target)
+    private void ShowTractorBeam()
     {
-        Vector3 dir = target.transform.position - transform.position;
+        tractorBeamLR.SetPosition(0, tractorBeamStart.position);
+        GameObject go = tractorBeamEnd.GetChild(0).gameObject;
+        tractorBeamLR.SetPosition(1, go.transform.position);
+    }
+
+    private void MoveRobot()
+    {
+        //Accumulate behaviors into a single direction
+        Vector3 dir = seekDir.normalized 
+                      + avoidDir.normalized * avoidWeight;
+
+
         transform.Translate(dir.normalized * speed * Time.deltaTime, Space.World);
         Quaternion lookRotation = Quaternion.LookRotation(dir);
         Vector3 rotation = Quaternion.Lerp(transform.rotation, lookRotation, Time.deltaTime * rotationSpeed).eulerAngles;
@@ -95,16 +181,17 @@ public class RobotController : MonoBehaviour {
 
     void GrabTarget()
     {
-        if (targetToMove.GetComponent<JunkController>().PickUp(tractorBeam))
+        if (targetToMove.GetComponent<JunkController>().PickUp(tractorBeamEnd))
         {
             targetToMove = null;
-            GetTrashTarget();
+            tractorBeamLR.enabled = true;
         }
     }
 
     void DropTarget(GameObject itemToDrop)
     {
         itemToDrop.GetComponent<JunkController>().Drop();
+        tractorBeamLR.enabled = false;
         return;
     }
 
@@ -112,6 +199,7 @@ public class RobotController : MonoBehaviour {
     {
         Gizmos.color = Color.red;
         Gizmos.DrawWireSphere(transform.position, viewDistance);
+        Gizmos.DrawWireSphere(tractorBeamEnd.position, tractorBeamArrivalRadius);
     }
 
 
@@ -128,16 +216,18 @@ public class RobotController : MonoBehaviour {
         waypointTarget = Waypoints.points[waypointindex];
     }
 
-    void GetTrashTarget()
+    private Vector3 GetTrashDir()
     {
-       Vector3 trashVector = TrashArea.points[1].transform.position - TrashArea.points[0].transform.position;
-       Vector3 robotVector = transform.position - TrashArea.points[0].transform.position;
+        Vector3 trashVector = TrashArea.points[1].transform.position - TrashArea.points[0].transform.position;
+        Vector3 robotVector = transform.position - TrashArea.points[0].transform.position;
 
-       Vector3 trashTargetAdjustment = Vector3.Project(robotVector, trashVector);
+        Vector3 trashTargetAdjustment = Vector3.Project(robotVector, trashVector);
+        
+        Vector3 trashTargetLocation = TrashArea.points[0].transform.position + trashTargetAdjustment;
 
-        trashTarget.transform.position = TrashArea.points[0].transform.position;
+        Vector3 trashTargetDir = trashTargetLocation - transform.position;
 
-        trashTarget.transform.Translate(trashTargetAdjustment);
+        return trashTargetDir;
     }
 
     void UpdateTarget()
@@ -148,7 +238,7 @@ public class RobotController : MonoBehaviour {
         if (targetToMove != null)
         {
             //Someone else picked up our target. We need a new one
-            if (!targetToMove.GetComponent<JunkController>().needsPickUp())
+            if (!targetToMove.GetComponent<JunkController>().NeedsPickUp())
             {
                 targetToMove = null;
             }
@@ -159,7 +249,7 @@ public class RobotController : MonoBehaviour {
             }
         }
 
-        if (tractorBeam.childCount > 0)
+        if (tractorBeamEnd.childCount > 0)
             return;
         
         GameObject[] targets = GameObject.FindGameObjectsWithTag(itemToMoveTag);
@@ -170,7 +260,7 @@ public class RobotController : MonoBehaviour {
         foreach (GameObject target in targets)
         {
             float distanceToTarget = Vector3.Distance(transform.position, target.transform.position);
-            if (distanceToTarget < shortestDistance && target.GetComponent<JunkController>().needsPickUp())
+            if (distanceToTarget < shortestDistance && target.GetComponent<JunkController>().NeedsPickUp())
             {
                 shortestDistance = distanceToTarget;
                 nearestTarget = target;
